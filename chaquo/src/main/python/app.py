@@ -110,6 +110,13 @@ def action(ru, action):
     return json2str(ru.action(action))
 
 
+def danmaku(ru, id, emitter):
+    stop = ru.danmaku(id, lambda item: emitter.emit(json.dumps(item, ensure_ascii=False, allow_nan=False)))
+    if not callable(stop):
+        raise TypeError("danmaku must return a stop function")
+    return stop
+
+
 def destroy(ru):
     try:
         ru.destroy()

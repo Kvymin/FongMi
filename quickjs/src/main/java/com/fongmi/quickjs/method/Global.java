@@ -8,6 +8,7 @@ import com.fongmi.quickjs.host.Host;
 import com.fongmi.quickjs.utils.Connect;
 import com.fongmi.quickjs.utils.HtmlQuery;
 import com.github.catvod.Proxy;
+import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.Net;
 import com.github.catvod.net.NetOptions;
@@ -18,12 +19,18 @@ import com.github.catvod.utils.Trans;
 import com.github.catvod.utils.UriUtil;
 import com.google.gson.JsonElement;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public class Global {
@@ -37,6 +44,8 @@ public class Global {
     private final Host host;
     private final String siteKey;
     private final Map<QuickJS.Callback, Invocation> callbacks = new HashMap<>();
+    private final Map<Integer, Consumer<JSONObject>> danmakus = new ConcurrentHashMap<>();
+    private final AtomicInteger nextDanmaku = new AtomicInteger();
     private Invocation invocation;
 
     private volatile boolean destroyed;
@@ -92,6 +101,7 @@ public class Global {
     }
 
     private void release() {
+        danmakus.clear();
         network.release();
         cache.release();
         releaseCallbacks();
@@ -145,7 +155,9 @@ public class Global {
         ctx.bind("getUserAgent", args -> getUserAgent()).join();
         ctx.bind("getPort", args -> getPort()).join();
         ctx.bind("getProxy", args -> getProxy((Boolean) argument(args, 0))).join();
-        ctx.bind("_proxyUrl", args -> _proxyUrl((QuickJS.Json) argument(args, 0))).join();
+        ctx.bind("proxyUrl", args -> proxyUrl((QuickJS.Json) argument(args, 0))).join();
+        ctx.bind("getDanmakuUrl", args -> Spider.getDanmakuUrl(siteKey, string(args, 0))).join();
+        ctx.bind("emitDanmaku", args -> emitDanmaku(integer(args, 0), (QuickJS.Json) argument(args, 1))).join();
         ctx.bind("js2Proxy", args -> js2Proxy((Boolean) argument(args, 0), integer(args, 1), string(args, 2), string(args, 3), (QuickJS.Json) argument(args, 4))).join();
     }
 
@@ -216,6 +228,23 @@ public class Global {
         return !future.isCompletedExceptionally();
     }
 
+    public int addDanmaku(Consumer<JSONObject> emit) {
+        if (destroyed) throw new IllegalStateException("Spider destroyed");
+        int id = nextDanmaku.incrementAndGet();
+        danmakus.put(id, emit);
+        return id;
+    }
+
+    public void removeDanmaku(int id) {
+        danmakus.remove(id);
+    }
+
+    private Object emitDanmaku(int id, QuickJS.Json item) throws JSONException {
+        Consumer<JSONObject> emit = danmakus.get(id);
+        if (emit != null) emit.accept(new JSONObject(item.text()));
+        return null;
+    }
+
     public String s2t(String text) {
         return Trans.s2t(false, text);
     }
@@ -248,7 +277,7 @@ public class Global {
         return Proxy.getUrl(local) + "?do=js";
     }
 
-    public String _proxyUrl(QuickJS.Json params) {
+    public String proxyUrl(QuickJS.Json params) {
         Uri.Builder url = Uri.parse(Proxy.getUrl(true)).buildUpon().appendQueryParameter("do", "js").appendQueryParameter("siteKey", siteKey);
         if (params != null) {
             for (Map.Entry<String, JsonElement> entry : Json.strict(params.text()).getAsJsonObject().entrySet()) {

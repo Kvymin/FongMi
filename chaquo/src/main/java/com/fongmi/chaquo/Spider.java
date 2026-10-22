@@ -10,10 +10,15 @@ import com.github.catvod.utils.Local;
 import com.github.catvod.utils.Util;
 import com.google.gson.Gson;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.ByteArrayInputStream;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public class Spider extends com.github.catvod.crawler.Spider {
@@ -136,6 +141,21 @@ public class Spider extends com.github.catvod.crawler.Spider {
     }
 
     @Override
+    public AutoCloseable danmaku(String id, Consumer<JSONObject> emit) {
+        Emitter emitter = new Emitter(emit);
+        PyObject stop;
+        try {
+            stop = app.callAttr("danmaku", obj, id, emitter);
+        } catch (RuntimeException | Error error) {
+            emitter.close();
+            throw error;
+        }
+        return () -> {
+            if (emitter.close()) stop.call();
+        };
+    }
+
+    @Override
     public void destroy() {
         Throwable failure = null;
         try {
@@ -175,6 +195,25 @@ public class Spider extends com.github.catvod.crawler.Spider {
         String content = o.toString();
         if (base64 && content.contains("base64,")) content = content.split("base64,")[1];
         return new ByteArrayInputStream(base64 ? Util.decode(content) : content.getBytes());
+    }
+
+    @Keep
+    public static final class Emitter {
+
+        private final AtomicReference<Consumer<JSONObject>> listener;
+
+        private Emitter(Consumer<JSONObject> listener) {
+            this.listener = new AtomicReference<>(listener);
+        }
+
+        public void emit(String json) throws JSONException {
+            Consumer<JSONObject> current = listener.get();
+            if (current != null) current.accept(new JSONObject(json));
+        }
+
+        private boolean close() {
+            return listener.getAndSet(null) != null;
+        }
     }
 
     public static final class UserAgent {

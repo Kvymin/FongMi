@@ -178,7 +178,7 @@ function netDownload(url, path, options = {}) {
 function getProxyUrl(params = {}) {
     if (!params || typeof params !== 'object' || Array.isArray(params)) throw new TypeError('Proxy parameters require an object');
     if ('do' in params || 'siteKey' in params) throw new TypeError('Proxy parameters cannot override routing');
-    const url = _proxyUrl(params);
+    const url = proxyUrl(params);
     if (typeof url !== 'string') throw new Error('Proxy URL is unavailable');
     return url;
 }
