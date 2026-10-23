@@ -18,8 +18,8 @@ function loadSpider() {
 
 function createSpider(api) {
     const wrapped = Object.create(api);
-    const data = new Set(['home', 'homeVod', 'category', 'detail', 'search', 'play', 'live', 'action']);
-    for (const name of [...data, 'init', 'proxy', 'sniffer', 'isVideo']) bindSpiderMethod(wrapped, api, data, name);
+    for (const name of ['home', 'homeVod', 'category', 'detail', 'search', 'play', 'live', 'action']) bindSpiderMethod(wrapped, api, name, true);
+    for (const name of ['init', 'proxy', 'sniffer', 'isVideo']) bindSpiderMethod(wrapped, api, name, false);
     bindDanmaku(wrapped, api);
     return wrapped;
 }
@@ -31,12 +31,12 @@ function output(value) {
     return json;
 }
 
-function bindSpiderMethod(wrapped, api, data, name) {
+function bindSpiderMethod(wrapped, api, name, serialize) {
     if (typeof api[name] !== 'function') return;
     Object.defineProperty(wrapped, name, {
         value: function(...args) {
             const value = api[name].apply(api, args);
-            if (!data.has(name)) return value;
+            if (!serialize) return value;
             return value && typeof value.then === 'function' ? value.then(output) : output(value);
         },
         writable: true,

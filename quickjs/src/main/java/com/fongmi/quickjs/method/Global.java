@@ -60,7 +60,7 @@ public class Global {
         this.web = new WebPlatform(ctx, SpiderDebug::log, api);
         this.network = new Network(this, net, web);
         this.cache = new Cache(this, network, local);
-        this.streams = new Streams(this, network);
+        this.streams = new Streams(this, network, host.getCallTimeout());
         this.sockets = new Sockets(this, network);
         setProperty();
         ctx.onClose(this::destroy).join();
@@ -94,9 +94,13 @@ public class Global {
         destroyed = true;
         network.cancelSleeps();
         try {
-            network.close();
+            streams.close();
         } finally {
-            release();
+            try {
+                network.close();
+            } finally {
+                release();
+            }
         }
     }
 
@@ -116,8 +120,12 @@ public class Global {
 
     public void cancelRequests() {
         sockets.markClosing();
-        network.cancelSleeps();
-        network.close();
+        try {
+            streams.close();
+        } finally {
+            network.cancelSleeps();
+            network.close();
+        }
     }
 
     private Boolean closeSession(Integer id) {
@@ -169,6 +177,7 @@ public class Global {
         ctx.bind("__http", args -> network.http(string(args, 0), (QuickJS.Json) argument(args, 1), (QuickJS.Callback) argument(args, 2))).join();
         ctx.bindAsync("_httpAsync", args -> network.requestAsync(string(args, 0), (QuickJS.Json) argument(args, 1)), this::captureInvocation).join();
         ctx.bindAsync("_stream", args -> streams.proxy(string(args, 0), (QuickJS.Json) argument(args, 1)), this::captureInvocation).join();
+        ctx.bind("_streamBody", args -> streams.body((QuickJS.Callback) argument(args, 0), (QuickJS.Callback) argument(args, 1))).join();
         ctx.bindAsync("_openStream", args -> streams.open(string(args, 0), (QuickJS.Json) argument(args, 1), true), this::captureInvocation).join();
         ctx.bindAsync("_streamRead", args -> streams.read(string(args, 0), integer(args, 1)), this::captureInvocation).join();
         ctx.bind("_streamClose", args -> invocation != null && invocation.discardStream(string(args, 0))).join();
@@ -226,6 +235,40 @@ public class Global {
             if (error != null && !destroyed) SpiderDebug.log(error);
         });
         return !future.isCompletedExceptionally();
+    }
+
+    CompletableFuture<Object> invoke(Invocation current, QuickJS.Callback callback, Object... args) {
+        CompletableFuture<Object> result = new CompletableFuture<>();
+        if (destroyed) {
+            result.completeExceptionally(new IllegalStateException("Spider destroyed"));
+        } else {
+            ctx.execute(() -> invoke(current, callback, result, args)).whenComplete((value, error) -> {
+                if (error != null) result.completeExceptionally(error);
+            });
+        }
+        return result;
+    }
+
+    private void invoke(Invocation current, QuickJS.Callback callback, CompletableFuture<Object> result, Object[] args) {
+        if (result.isDone()) return;
+        Invocation previous = invocation;
+        invocation = current;
+        current.enter();
+        try {
+            CompletableFuture<Object> source = callback.callDetached(args);
+            result.whenComplete((value, error) -> {
+                if (result.isCancelled()) source.cancel(false);
+            });
+            source.whenComplete((value, error) -> {
+                if (error == null) result.complete(value);
+                else result.completeExceptionally(error);
+            });
+        } catch (RuntimeException | Error error) {
+            result.completeExceptionally(error);
+        } finally {
+            current.leave();
+            invocation = previous;
+        }
     }
 
     public int addDanmaku(Consumer<JSONObject> emit) {

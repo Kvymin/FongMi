@@ -60,8 +60,8 @@ def init(ru, extend):
         raise
 
 
-def bindNet(ru, net, user_agent=None, local=None):
-    ru.net = NetAdapter(net, user_agent)
+def bindNet(ru, net, user_agent=None, local=None, streams=None):
+    ru.net = NetAdapter(net, user_agent, streams)
     ru.local = LocalAdapter(local)
 
 

@@ -14,6 +14,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +30,7 @@ public class Spider extends com.github.catvod.crawler.Spider {
     private final PyObject obj;
     private final Net.Cookies cookies;
     private final UserAgent userAgent;
+    private final Streams streams = new Streams();
 
     public Spider(PyObject app, PyObject obj, String api) {
         this(app, obj, api, null);
@@ -56,7 +58,7 @@ public class Spider extends com.github.catvod.crawler.Spider {
         local = new Local(siteKey);
         try {
             obj.put("siteKey", siteKey);
-            app.callAttr("bindNet", obj, net, userAgent, local);
+            app.callAttr("bindNet", obj, net, userAgent, local, streams);
             app.callAttr("init", obj, extend);
         } catch (RuntimeException | Error e) {
             releaseSpider(e);
@@ -65,6 +67,11 @@ public class Spider extends com.github.catvod.crawler.Spider {
     }
 
     private void releaseSpider(Throwable failure) {
+        try {
+            streams.close();
+        } catch (RuntimeException | Error error) {
+            if (error != failure) failure.addSuppressed(error);
+        }
         try {
             net.close();
         } catch (RuntimeException | Error error) {
@@ -159,9 +166,15 @@ public class Spider extends com.github.catvod.crawler.Spider {
     public void destroy() {
         Throwable failure = null;
         try {
-            if (net != null) net.close();
+            streams.close();
         } catch (RuntimeException | Error error) {
             failure = error;
+        }
+        try {
+            if (net != null) net.close();
+        } catch (RuntimeException | Error error) {
+            if (failure == null) failure = error;
+            else if (failure != error) failure.addSuppressed(error);
         }
         destroyPython(failure);
         if (failure instanceof RuntimeException error) throw error;
@@ -189,8 +202,11 @@ public class Spider extends com.github.catvod.crawler.Spider {
         }
     }
 
-    private ByteArrayInputStream getStream(PyObject o, boolean base64) {
+    private InputStream getStream(PyObject o, boolean base64) {
         if (o == null) return null;
+        Object value = o.toJava(Object.class);
+        if (value instanceof InputStream stream) return stream;
+        if (value instanceof byte[] bytes) return new ByteArrayInputStream(bytes);
         if (o.type().toString().contains("bytes")) return new ByteArrayInputStream(o.toJava(byte[].class));
         String content = o.toString();
         if (base64 && content.contains("base64,")) content = content.split("base64,")[1];
